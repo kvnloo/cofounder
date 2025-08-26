@@ -5,7 +5,8 @@
 	},
 	"scripts": {
 		"start:npx": "npm i && nodemon --loader esm-module-alias/loader --no-warnings server.js",
-		"start": "nodemon --loader esm-module-alias/loader --no-warnings server.js"
+		"start": "nodemon --loader esm-module-alias/loader --no-warnings server.js",
+		"start:with-claude": "node --loader esm-module-alias/loader --no-warnings claude-code-launcher.js"
 	},
 	"nodemonConfig": {
 		"ignore": [
@@ -26,11 +27,13 @@
 		"express": "^4.19.2",
 		"firebase-admin": "^12.4.0",
 		"firestore": "^1.1.6",
+		"form-data": "^4.0.0",
 		"fs-extra": "^11.2.0",
 		"js-yaml": "^4.1.0",
 		"lodash": "^4.17.21",
 		"lodash-es": "^4.17.21",
 		"module-alias": "^2.2.3",
+		"node-fetch": "^3.3.2",
 		"nodemon": "*",
 		"open": "^10.1.0",
 		"openai": "^4.55.4",

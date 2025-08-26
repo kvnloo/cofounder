@@ -5,6 +5,7 @@ import Sidebar from "@/components/views/sidebar";
 import ProjectsList from "@/components/views/projects-list";
 import ComponentsDesigner from "@/components/views/component-designer";
 import Settings from "@/components/views/settings";
+import AuthSettings from "@/components/views/auth-settings";
 import Project from "@/components/views/project";
 
 const App: React.FC = () => {
@@ -73,6 +74,14 @@ const App: React.FC = () => {
 								/>
 								<Route path="/project/:project" element={<Project />} />
 								<Route path="/playground/designer" element={<ComponentsDesigner />} />
+								<Route 
+									path="/auth" 
+									element={
+										<div className="container text-white mx-auto w-full max-w-[90vw] xl:max-w-[80vw] p-6 mt-6">
+											<AuthSettings />
+										</div>
+									} 
+								/>
 								<Route path="/settings" element={<Settings />} />
 							</Routes>
 						</div>
