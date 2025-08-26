@@ -6,11 +6,13 @@ import firebase from "@/utils/firebase.js";
 import storage from "@/utils/storage.js";
 import load from "@/utils/load.js";
 import anthropic from "@/utils/anthropic.js";
+import llm from "@/utils/llm.js";
 
 export default {
 	parsers,
 	openai,
 	anthropic,
+	llm, // New unified LLM service
 	vectra,
 	render,
 	firebase,

@@ -57,17 +57,35 @@ async function opLlmGen({ context, data }) {
 		parser = utils.parsers.parse.yaml;
 	}
 
-	const llm_fn = !process.env.LLM_PROVIDER
-		? utils.openai.inference
-		: process.env.LLM_PROVIDER.toLowerCase() === "openai"
+	// Use new unified LLM service with auth providers
+	// Falls back to legacy providers if AUTH_PROVIDER is not set or fails
+	let text, usage;
+	try {
+		const result = await utils.llm.inference({
+			model: model,
+			messages,
+			stream,
+		});
+		text = result.text;
+		usage = result.usage;
+	} catch (error) {
+		console.warn('[op:LLM::GEN] Unified LLM service failed, falling back to legacy providers:', error.message);
+		
+		// Fallback to legacy provider selection
+		const llm_fn = !process.env.LLM_PROVIDER
 			? utils.openai.inference
-			: utils.anthropic.inference;
+			: process.env.LLM_PROVIDER.toLowerCase() === "openai"
+				? utils.openai.inference
+				: utils.anthropic.inference;
 
-	const { text, usage } = await llm_fn({
-		model: model,
-		messages,
-		stream,
-	});
+		const result = await llm_fn({
+			model: model,
+			messages,
+			stream,
+		});
+		text = result.text;
+		usage = result.usage;
+	}
 
 	if (operation && streams) {
 		await streams.end({
@@ -112,9 +130,14 @@ async function opLlmVectorizeChunk({ context, data }) {
 		queue concurrency/lims defined for this one
 	*/
 	const { texts } = data;
-	return await utils.openai.vectorize({
-		texts,
-	});
+	
+	// Try unified LLM service first, fallback to OpenAI
+	try {
+		return await utils.llm.vectorize({ texts });
+	} catch (error) {
+		console.warn('[op:LLM::VECTORIZE:CHUNK] Unified LLM service failed, falling back to OpenAI:', error.message);
+		return await utils.openai.vectorize({ texts });
+	}
 }
 async function opLlmVectorize({ context, data }) {
 	/* ;; op:LLM::VECTORIZE

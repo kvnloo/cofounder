@@ -146,6 +146,50 @@ app.get("/api/ping", (req, res) => {
 	res.status(200).json({ message: "pong" });
 });
 
+// Authentication management endpoints
+app.get("/api/auth/info", (req, res) => {
+	try {
+		const info = utils.llm.getProviderInfo();
+		res.status(200).json(info);
+	} catch (error) {
+		res.status(500).json({ error: error.message });
+	}
+});
+
+app.post("/api/auth/switch", async (req, res) => {
+	try {
+		const { provider } = req.body;
+		if (!provider) {
+			return res.status(400).json({ error: "Provider type required" });
+		}
+
+		await utils.llm.switchProvider(provider);
+		res.status(200).json({ success: true, activeProvider: provider });
+	} catch (error) {
+		res.status(500).json({ error: error.message });
+	}
+});
+
+app.post("/api/auth/refresh", async (req, res) => {
+	try {
+		await utils.llm.refreshProviders();
+		const info = utils.llm.getProviderInfo();
+		res.status(200).json(info);
+	} catch (error) {
+		res.status(500).json({ error: error.message });
+	}
+});
+
+app.get("/api/auth/health", async (req, res) => {
+	try {
+		const healthy = await utils.llm.isHealthy();
+		const info = utils.llm.getProviderInfo();
+		res.status(200).json({ healthy, ...info });
+	} catch (error) {
+		res.status(500).json({ error: error.message, healthy: false });
+	}
+});
+
 app.get("/api/projects/list", (req, res) => {
 	fs.readdir("./db/projects", (err, files) => {
 		if (err) {
@@ -190,7 +234,16 @@ app.post("/api/utils/transcribe", async (req, res) => {
 		// Write the audio buffer to the temporary path
 		fs.writeFileSync(tempFilePath, audioBuffer);
 
-		const { transcript } = await utils.openai.transcribe({ path: tempFilePath });
+		// Try unified LLM service first, fallback to OpenAI
+		let transcript;
+		try {
+			const result = await utils.llm.transcribe({ path: tempFilePath });
+			transcript = result.transcript;
+		} catch (error) {
+			console.warn('Unified LLM service failed for transcription, falling back to OpenAI:', error.message);
+			const result = await utils.openai.transcribe({ path: tempFilePath });
+			transcript = result.transcript;
+		}
 		res.status(200).json({ transcript });
 	} catch (error) {
 		console.error("Transcription error:", error);
