@@ -8,6 +8,7 @@ import {
 	PlayIcon,
 	Cog6ToothIcon,
 	Squares2X2Icon,
+	ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
 import {
 	Tooltip,
@@ -123,6 +124,23 @@ const Sidebar: React.FC = () => {
 						)}
 					</div>
 				)}
+
+				<TooltipProvider>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Link
+								to="/auth"
+								className="flex items-center p-3 hover:bg-[#1a1a1a]"
+							>
+								<ShieldCheckIcon className="w-3 h-3 text-[#bbb]" />
+								{!isCollapsed && <span className="ml-3">Authentication</span>}
+							</Link>
+						</TooltipTrigger>
+						<TooltipContent>
+							<p>Authentication Settings</p>
+						</TooltipContent>
+					</Tooltip>
+				</TooltipProvider>
 
 				<TooltipProvider>
 					<Tooltip>
