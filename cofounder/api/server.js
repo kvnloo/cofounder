@@ -12,7 +12,6 @@ import { hideBin } from "yargs/helpers";
 import { merge } from "lodash-es";
 import open, { openApp, apps } from "open";
 import cofounder from "./build.js";
-import { generateAuthUrl, exchangeCodeForTokens, refreshAccessToken, isTokenExpired } from "@/utils/oauth-pkce.js";
 dotenv.config();
 
 // ES module __dirname equivalent (only if not already defined)
@@ -192,171 +191,44 @@ app.get("/api/auth/health", async (req, res) => {
 	}
 });
 
-// OAuth PKCE Browser Authentication Endpoints
-// Store for temporary OAuth state (in production, use Redis or database)
-const oauthStates = new Map();
-
-app.post("/api/auth/oauth/start", (req, res) => {
+app.get("/api/auth/providers", (req, res) => {
 	try {
-		const { authUrl, state, codeVerifier } = generateAuthUrl();
-		
-		// Store state and code verifier temporarily
-		oauthStates.set(state, {
-			codeVerifier,
-			createdAt: Date.now()
-		});
-		
-		// Clean up old states (older than 10 minutes)
-		for (const [key, value] of oauthStates.entries()) {
-			if (Date.now() - value.createdAt > 10 * 60 * 1000) {
-				oauthStates.delete(key);
-			}
-		}
-		
+		const providers = utils.llm.getAvailableProviders();
+		const info = utils.llm.getProviderInfo();
 		res.status(200).json({ 
-			authUrl,
-			state,
-			message: "Open the authUrl in your browser to authenticate with Claude"
+			available: providers,
+			active: info.activeProvider,
+			preferred: info.preferredProvider,
+			...info 
 		});
 	} catch (error) {
 		res.status(500).json({ error: error.message });
 	}
 });
 
-app.post("/api/auth/oauth/callback", async (req, res) => {
+app.post("/api/auth/switch-provider", async (req, res) => {
 	try {
-		const { code, state } = req.body;
+		const { provider } = req.body;
 		
-		if (!code || !state) {
+		if (!provider) {
 			return res.status(400).json({ 
-				error: "Missing authorization code or state" 
+				error: "Provider type is required" 
 			});
 		}
-		
-		// Verify state exists and get code verifier
-		const oauthData = oauthStates.get(state);
-		if (!oauthData) {
-			return res.status(400).json({ 
-				error: "Invalid state or expired session" 
-			});
-		}
-		
-		// Exchange authorization code for tokens
-		const tokens = await exchangeCodeForTokens(code, oauthData.codeVerifier, state);
-		
-		// Clean up used state
-		oauthStates.delete(state);
-		
-		// Store tokens securely (in production, use encrypted storage)
-		// For now, we'll store in memory or file system
-		const tokenData = {
-			...tokens,
-			provider: 'claude-oauth',
-			authenticatedAt: new Date().toISOString()
-		};
-		
-		// Save tokens to secure storage (you might want to encrypt this)
-		fs.writeFileSync(
-			path.join(__dirname, 'oauth-tokens.json'),
-			JSON.stringify(tokenData, null, 2)
-		);
+
+		await utils.llm.switchProvider(provider);
+		const info = utils.llm.getProviderInfo();
 		
 		res.status(200).json({ 
 			success: true,
-			message: "Authentication successful! You can now use Claude via your subscription.",
-			expiresAt: new Date(tokens.expiresAt).toISOString()
+			message: `Switched to provider: ${provider}`,
+			...info 
 		});
 	} catch (error) {
 		res.status(500).json({ error: error.message });
 	}
 });
 
-app.get("/api/auth/oauth/status", (req, res) => {
-	try {
-		const tokenPath = path.join(__dirname, 'oauth-tokens.json');
-		
-		if (!fs.existsSync(tokenPath)) {
-			return res.status(200).json({ 
-				authenticated: false,
-				message: "No OAuth tokens found" 
-			});
-		}
-		
-		const tokenData = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
-		const expired = isTokenExpired(tokenData.expiresAt);
-		
-		res.status(200).json({
-			authenticated: !expired,
-			provider: tokenData.provider,
-			authenticatedAt: tokenData.authenticatedAt,
-			expiresAt: new Date(tokenData.expiresAt).toISOString(),
-			expired: expired,
-			scope: tokenData.scope
-		});
-	} catch (error) {
-		res.status(500).json({ error: error.message });
-	}
-});
-
-app.post("/api/auth/oauth/refresh", async (req, res) => {
-	try {
-		const tokenPath = path.join(__dirname, 'oauth-tokens.json');
-		
-		if (!fs.existsSync(tokenPath)) {
-			return res.status(400).json({ 
-				error: "No OAuth tokens found to refresh" 
-			});
-		}
-		
-		const tokenData = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
-		
-		if (!tokenData.refreshToken) {
-			return res.status(400).json({ 
-				error: "No refresh token available" 
-			});
-		}
-		
-		// Refresh the access token
-		const newTokens = await refreshAccessToken(tokenData.refreshToken);
-		
-		// Update stored tokens
-		const updatedTokenData = {
-			...tokenData,
-			...newTokens,
-			refreshedAt: new Date().toISOString()
-		};
-		
-		fs.writeFileSync(
-			tokenPath,
-			JSON.stringify(updatedTokenData, null, 2)
-		);
-		
-		res.status(200).json({
-			success: true,
-			message: "Tokens refreshed successfully",
-			expiresAt: new Date(newTokens.expiresAt).toISOString()
-		});
-	} catch (error) {
-		res.status(500).json({ error: error.message });
-	}
-});
-
-app.delete("/api/auth/oauth/logout", (req, res) => {
-	try {
-		const tokenPath = path.join(__dirname, 'oauth-tokens.json');
-		
-		if (fs.existsSync(tokenPath)) {
-			fs.unlinkSync(tokenPath);
-		}
-		
-		res.status(200).json({ 
-			success: true,
-			message: "Logged out successfully" 
-		});
-	} catch (error) {
-		res.status(500).json({ error: error.message });
-	}
-});
 
 app.get("/api/projects/list", (req, res) => {
         fs.readdir("./db/projects", (err, files) => {
