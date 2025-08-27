@@ -16,14 +16,19 @@ const App: React.FC = () => {
 	const SERVER_LOCAL_URL = "http://localhost:4200/api";
 	useEffect(() => {
 		const checkPingServer = async () => {
+			console.log('🔄 Checking ping server...');
 			try {
 				const response = await fetch(`${SERVER_LOCAL_URL}/ping`);
+				console.log('📡 Ping response:', response.status, response.ok);
 				if (response.ok) {
+					console.log('✅ Server ping successful');
 					setPingServer(true);
 				} else {
+					console.log('❌ Server ping failed - bad response');
 					setPingServer(false);
 				}
 			} catch (error) {
+				console.log('❌ Server ping failed - error:', error);
 				setPingServer(false);
 			}
 			setPingServerChecked(true);
@@ -37,7 +42,7 @@ const App: React.FC = () => {
 			{(pingServer && (
 				<>
 					<div className="flex h-screen">
-						{!location.pathname.startsWith("/project/") && <Sidebar />}
+						<Sidebar />
 						<div className="flex-1 overflow-auto">
 							<Routes>
 								<Route

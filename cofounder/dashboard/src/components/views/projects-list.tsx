@@ -57,9 +57,40 @@ const ProjectsList = () => {
                         try {
                                 const response = await fetch(`${SERVER_LOCAL_URL}/projects/list`);
                                 const data = await response.json();
-                                setProjects(data.projects);
+                                
+                                // Auto-include the actual cofounder project from the workspace
+                                // The path is relative to the API server which runs from /cofounder/api
+                                // So the cofounder project root is at ../
+                                const cofounderProject = {
+                                        id: "cofounder",
+                                        path: "../", // Relative to API server location
+                                        data: {
+                                                text: "The Cofounder project itself - a comprehensive platform for rapid prototyping, product management, and full-scale application development with integrated agile methodologies."
+                                        },
+                                        isMetaProject: true // Special flag to indicate this is the tool itself
+                                };
+                                
+                                // Filter out any old cofounder-recursive entries and add the real cofounder project
+                                const filteredProjects = data.projects.filter(p => p.id !== "cofounder-recursive");
+                                const existingCofounder = filteredProjects.find(p => p.id === "cofounder");
+                                
+                                if (!existingCofounder) {
+                                        setProjects([cofounderProject, ...filteredProjects]);
+                                } else {
+                                        setProjects(filteredProjects);
+                                }
                         } catch (error) {
                                 console.error("Failed to fetch projects:", error);
+                                // Even if fetch fails, show the cofounder project
+                                const cofounderProject = {
+                                        id: "cofounder",
+                                        path: "../",
+                                        data: {
+                                                text: "The Cofounder project itself - a comprehensive platform for rapid prototyping, product management, and full-scale application development with integrated agile methodologies."
+                                        },
+                                        isMetaProject: true
+                                };
+                                setProjects([cofounderProject]);
                         }
                 };
 
@@ -200,8 +231,8 @@ const ProjectsList = () => {
                                 <div className="flex gap-2">
                                         <Dialog>
                                                 <DialogTrigger asChild>
-                                                        <Button variant="outline" className="font-normal">
-                                                                Analyze Existing
+                                                        <Button variant="secondary" className="font-normal">
+                                                                📁 Import Project
                                                         </Button>
                                                 </DialogTrigger>
                                                 <DialogContent
@@ -209,9 +240,9 @@ const ProjectsList = () => {
                                                         border-[#222] min-w-[50vw] min-h-[30vh] max-h-[90vh] overflow-auto p-8"
                                                 >
                                                         <DialogHeader>
-                                                                <DialogTitle className="font-normal text-xl">Analyze Existing Project</DialogTitle>
+                                                                <DialogTitle className="font-normal text-xl">Import Existing Project</DialogTitle>
                                                                 <DialogDescription className="text-base text-[#ccc]">
-                                                                        Enter the path to your existing project to analyze it
+                                                                        Import an existing project by analyzing its structure and generating a Cofounder version
                                                                 </DialogDescription>
                                                         </DialogHeader>
                                                         <Form {...form}>
@@ -354,12 +385,6 @@ const ProjectsList = () => {
                                                                                                         </motion.button>
                                                                                                 </div>
                                                                                         </FormControl>
-                                                                                        {/*<div className="py-2 flex justify-end">
-                        {audioBlob && (
-                          <audio className="w-1/2" src={URL.createObjectURL(audioBlob)} controls="controls" />
-                        )}
-                      </div>
-                      */}
                                                                                         <FormMessage />
                                                                                 </FormItem>
                                                                         )}
@@ -396,6 +421,7 @@ const ProjectsList = () => {
                                         </DialogContent>
                                 </Dialog>
                         </div>
+                </div>
                         <div className="mt-4 pt-4 border-t border-[#222] grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                 {projects.map((project: any) => (
                                         <Link key={project.id} to={`/project/${project.id}`}>

@@ -88,6 +88,7 @@ export default {
 		pm: "markdown",
 		db: "yaml",
 		backend: "complex",
+		ux: "yaml",
 		uxsitemap: "yaml",
 		uxdatamap: "yaml",
 		"webapp-structure": "complex",

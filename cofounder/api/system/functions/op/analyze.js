@@ -1,7 +1,7 @@
-const fs = require('fs');
-const path = require('path');
-const { promisify } = require('util');
-const { execFile } = require('child_process');
+import fs from 'fs';
+import path from 'path';
+import { promisify } from 'util';
+import { execFile } from 'child_process';
 const readFileAsync = promisify(fs.readFile);
 const readdirAsync = promisify(fs.readdir);
 const statAsync = promisify(fs.stat);
@@ -618,6 +618,6 @@ async function analyzeProject(projectPath) {
     return await analyzer.analyze();
 }
 
-module.exports = {
+export {
     analyzeProject
 };

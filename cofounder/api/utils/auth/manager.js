@@ -1,5 +1,6 @@
 import { ApiKeyProvider } from './providers/api-key.js';
 import { ClaudeSessionProvider } from './providers/claude-session.js';
+import { ClaudeCodeCliProvider } from './providers/claude-code-cli.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -38,6 +39,18 @@ export class AuthManager {
 	}
 
 	async _initializeProviders() {
+		// Initialize Claude Code CLI Provider first (preferred if available)
+		try {
+			const claudeCodeCliProvider = new ClaudeCodeCliProvider({
+				timeout: 300000, // 5 minutes
+			});
+			await claudeCodeCliProvider.initialize();
+			this.providers.set('claude-code-cli', claudeCodeCliProvider);
+			console.log('[AuthManager] Claude Code CLI provider initialized successfully');
+		} catch (error) {
+			console.warn('[AuthManager] Claude Code CLI provider initialization failed:', error.message);
+		}
+
 		// Initialize API Key Provider
 		try {
 			const apiKeyProvider = new ApiKeyProvider({
@@ -68,7 +81,15 @@ export class AuthManager {
 	}
 
 	async _selectActiveProvider() {
-		// Try preferred provider first
+		// Prioritize Claude Code CLI if available (best user experience)
+		const claudeCodeCli = this.providers.get('claude-code-cli');
+		if (claudeCodeCli && await claudeCodeCli.isValid()) {
+			this.activeProvider = claudeCodeCli;
+			console.log('[AuthManager] Using Claude Code CLI provider (best option)');
+			return;
+		}
+
+		// Try preferred provider
 		const preferred = this.providers.get(this.preferredProviderType);
 		if (preferred && await preferred.isValid()) {
 			this.activeProvider = preferred;
@@ -77,8 +98,21 @@ export class AuthManager {
 
 		// Fallback to any valid provider
 		if (this.fallbackEnabled) {
+			// Prefer claude-code-cli, then api-key, then claude-session
+			const preferenceOrder = ['claude-code-cli', 'api-key', 'claude-session'];
+			
+			for (const type of preferenceOrder) {
+				const provider = this.providers.get(type);
+				if (provider && await provider.isValid()) {
+					this.activeProvider = provider;
+					console.log(`[AuthManager] Falling back to provider: ${type}`);
+					return;
+				}
+			}
+
+			// If none from preference order work, try any remaining
 			for (const [type, provider] of this.providers) {
-				if (await provider.isValid()) {
+				if (!preferenceOrder.includes(type) && await provider.isValid()) {
 					this.activeProvider = provider;
 					console.log(`[AuthManager] Falling back to provider: ${type}`);
 					return;
