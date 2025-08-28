@@ -1,0 +1,76 @@
+OP:ANALYZE::SELF:CODEBASE:
+  desc: "Analyze Cofounder's own codebase structure and dependencies"
+  context: "cofounder self-analysis"
+  input:
+    required:
+      - project_root: "Path to Cofounder's root directory"
+    optional:
+      - analysis_depth: "Depth of analysis (default: full)"
+      - focus_areas: "Specific areas to analyze (api, dashboard, system)"
+  
+  operations:
+    - analyze_directory_structure
+    - map_dependency_graph  
+    - identify_system_boundaries
+    - extract_api_endpoints
+    - catalog_ui_components
+    - assess_code_quality
+    - identify_technical_debt
+    
+  output:
+    - codebase_structure: "Complete directory and file mapping"
+    - dependency_graph: "Import/export relationships"
+    - api_inventory: "All available endpoints"
+    - component_catalog: "React component inventory"
+    - quality_metrics: "Code quality assessment"
+    - improvement_opportunities: "Areas for enhancement"
+
+OP:AST-ANALYZER::SELF:STRUCTURE:
+  desc: "Use AST analysis to deeply understand Cofounder's code structure"
+  context: "cofounder ast self-analysis"
+  input:
+    required:
+      - codebase_analysis: "Output from OP:ANALYZE::SELF:CODEBASE"
+    optional:
+      - ast_cache: "Previous AST analysis cache"
+  
+  operations:
+    - parse_all_javascript_files
+    - parse_all_typescript_files
+    - extract_function_signatures
+    - map_class_hierarchies
+    - trace_data_flow
+    - identify_unused_code
+    - analyze_complexity_metrics
+    
+  output:
+    - ast_mapping: "Complete AST representation"
+    - function_catalog: "All function definitions and calls"
+    - class_hierarchy: "Object-oriented structure"
+    - data_flow_map: "How data moves through system"
+    - dead_code_report: "Unused functions and imports"
+    - complexity_analysis: "Cyclomatic complexity metrics"
+
+OP:PROJECT-CACHE::SELF:UPDATE:
+  desc: "Update Cofounder's project cache with self-analysis results"  
+  context: "cofounder cache update"
+  input:
+    required:
+      - ast_mapping: "Output from OP:AST-ANALYZER::SELF:STRUCTURE" 
+      - codebase_structure: "Output from OP:ANALYZE::SELF:CODEBASE"
+    optional:
+      - cache_strategy: "Caching approach (incremental, full)"
+  
+  operations:
+    - update_file_metadata_cache
+    - cache_dependency_relationships
+    - store_component_definitions
+    - update_api_endpoint_cache
+    - cache_performance_metrics
+    - store_quality_assessments
+    
+  output:
+    - cache_status: "Cache update results"
+    - cache_size: "Storage usage metrics"  
+    - cache_performance: "Access time improvements"
+    - indexed_components: "Number of cached components"

@@ -1,0 +1,125 @@
+PM:PRD::SELF:ANALYSIS:
+  desc: "Generate Product Requirements Document for Cofounder self-improvement"
+  context: "cofounder self prd"
+  input:
+    required:
+      - codebase_analysis: "Complete codebase analysis results"
+      - improvement_opportunities: "Identified enhancement areas"
+    optional:
+      - user_feedback: "User-reported issues and requests"
+      - performance_metrics: "Current system performance data"
+  
+  operations:
+    - analyze_current_capabilities
+    - identify_user_pain_points  
+    - prioritize_improvements
+    - define_success_metrics
+    - create_roadmap
+    - document_constraints
+    
+  output:
+    - product_vision: "Cofounder's self-improvement vision"
+    - feature_priorities: "Ranked list of improvements"
+    - success_criteria: "Measurable goals for enhancements"
+    - development_constraints: "Technical and resource limitations"
+    - implementation_roadmap: "Phased approach to improvements"
+
+PM:FRD::SELF:ANALYSIS:
+  desc: "Generate Functional Requirements Document for Cofounder self-enhancement"
+  context: "cofounder self frd"
+  input:
+    required:
+      - product_vision: "Output from PM:PRD::SELF:ANALYSIS"
+      - ast_mapping: "Complete code structure understanding"
+    optional:
+      - existing_functionality: "Current feature inventory"
+  
+  operations:
+    - specify_new_functions
+    - define_enhanced_workflows
+    - detail_api_improvements
+    - specify_ui_enhancements
+    - define_performance_requirements
+    - specify_integration_points
+    
+  output:
+    - functional_specifications: "Detailed function requirements"
+    - workflow_enhancements: "Improved process definitions"
+    - api_extensions: "New endpoint specifications"
+    - ui_improvements: "Interface enhancement specs"
+    - performance_targets: "Speed and efficiency goals"
+
+PM:DRD::SELF:ANALYSIS:
+  desc: "Generate Data Requirements Document for Cofounder self-improvement"
+  context: "cofounder self drd"
+  input:
+    required:
+      - functional_specifications: "Output from PM:FRD::SELF:ANALYSIS"
+      - current_data_flow: "Existing data architecture"
+    optional:
+      - cache_analysis: "Current caching effectiveness"
+  
+  operations:
+    - analyze_data_requirements
+    - design_enhanced_schemas
+    - specify_caching_improvements
+    - define_session_management
+    - specify_performance_data
+    - design_analytics_tracking
+    
+  output:
+    - data_architecture: "Enhanced data structure design"
+    - caching_strategy: "Improved caching mechanisms"
+    - session_requirements: "Session management specifications"
+    - performance_tracking: "Metrics collection design"
+    - storage_optimization: "Efficient data storage approach"
+
+PM:PRD::SELF:ENHANCEMENT:
+  desc: "Generate Product Requirements for specific Cofounder enhancements"
+  context: "cofounder enhancement prd"
+  input:
+    required:
+      - enhancement_target: "Specific area to enhance (AST, UI, API, etc.)"
+      - current_analysis: "Analysis of current implementation"
+    optional:
+      - user_requirements: "Specific user-requested improvements"
+  
+  operations:
+    - define_enhancement_scope
+    - specify_user_benefits
+    - identify_technical_requirements
+    - assess_implementation_complexity
+    - define_testing_strategy
+    - create_rollout_plan
+    
+  output:
+    - enhancement_specification: "Detailed improvement plan"
+    - user_impact_assessment: "How users benefit from changes"
+    - technical_requirements: "Implementation specifications"
+    - testing_requirements: "Quality assurance approach"
+    - deployment_strategy: "Safe rollout methodology"
+
+PM:BRD::SELF:ENHANCEMENT:
+  desc: "Generate Business Requirements for Cofounder self-improvement"
+  context: "cofounder enhancement brd"
+  input:
+    required:
+      - enhancement_specification: "Output from PM:PRD::SELF:ENHANCEMENT"
+      - resource_constraints: "Available development resources"
+    optional:
+      - roi_expectations: "Expected return on enhancement investment"
+  
+  operations:
+    - assess_business_value
+    - analyze_resource_requirements
+    - identify_success_metrics
+    - define_risk_mitigation
+    - specify_maintenance_requirements
+    - create_cost_benefit_analysis
+    
+  output:
+    - business_justification: "Why this enhancement is valuable"
+    - resource_allocation: "Required development effort"
+    - success_metrics: "How to measure enhancement success"
+    - risk_assessment: "Potential issues and mitigations"
+    - maintenance_plan: "Long-term support requirements"

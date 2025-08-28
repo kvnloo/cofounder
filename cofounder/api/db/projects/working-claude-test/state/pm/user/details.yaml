@@ -1,0 +1,12 @@
+_updated: 1756342007999
+_processing: false
+key: pm.details
+data:
+  text: |-
+    Project 'working-claude-test' :
+    A simple todo app to test the Claude Code migration is working
+  attachments: []
+  design:
+    aesthetics:
+      text: false
+  timestamp: 1756342007973
