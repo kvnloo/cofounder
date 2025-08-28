@@ -85,15 +85,21 @@ export class AuthManager {
 		const isInsideClaudeCode = !!(process.env.CLAUDECODE || process.env.CLAUDE_CODE_ENTRYPOINT);
 		
 		if (isInsideClaudeCode) {
-			console.log('[AuthManager] Running inside Claude Code - prioritizing API keys for non-Claude operations');
+			console.log('[AuthManager] Running inside Claude Code - prioritizing Claude Code bridge for all operations');
 		}
 
-		// Define priority order based on environment
-		const providerPriority = isInsideClaudeCode 
-			? ['api-key'] // Inside Claude Code: just use API keys for non-Claude operations
-			: (this.preferredProvider 
-				? [this.preferredProvider, 'claude-code-cli', 'claude-session', 'api-key']
-				: ['claude-code-cli', 'claude-session', 'api-key']);
+		// Define priority order - Always prefer Claude Code CLI first
+		// This ensures maximum routing through Claude Code integration
+		const providerPriority = this.preferredProvider 
+			? [this.preferredProvider, 'claude-code-cli', 'claude-session', 'api-key']
+			: ['claude-code-cli', 'claude-session', 'api-key'];
+
+		// Special case: If explicitly requesting API key fallback, respect that
+		if (this.preferredProviderType === 'api-key') {
+			console.log('[AuthManager] Explicit API key preference - using direct API access');
+		} else {
+			console.log('[AuthManager] Prioritizing Claude Code bridge for LLM operations');
+		}
 
 		// Select the first available provider from priority list
 		for (const providerType of providerPriority) {

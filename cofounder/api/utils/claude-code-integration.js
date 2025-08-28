@@ -5,6 +5,7 @@ import path from 'path';
 /**
  * Claude Code Integration Service
  * Provides a bridge between Cofounder and local Claude Code CLI
+ * Enhanced to handle all system functions that require LLM operations
  */
 export class ClaudeCodeIntegration {
     constructor(config = {}) {
@@ -136,18 +137,35 @@ export class ClaudeCodeIntegration {
             
             // Now try a quick inference test with a very short timeout
             try {
+                console.log('[ClaudeCodeIntegration] Running authentication test...');
+                
+                // Temporarily set initialized to true for auth test
+                const wasInitialized = this.initialized;
+                this.initialized = true;
+                
                 const response = await Promise.race([
-                    this.executeCommand(['--print', 'hi'], {}),
+                    this.executeCommand(['-p', '"just say hi"']),
                     new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Inference test timeout')), 5000)
+                        setTimeout(() => reject(new Error('Inference test timeout')), 600000)
                     )
                 ]);
                 
-                if (response && response.trim().length > 0) {
+                // Restore original initialized state
+                this.initialized = wasInitialized;
+                
+                console.log('[ClaudeCodeIntegration] Auth test response:', typeof response, response);
+                
+                // Check for successful response (exit code 0 AND valid content)
+                if (response && typeof response === 'object' && response.exitCode === 0 && response.output && response.output.trim().length > 0) {
                     console.log('[ClaudeCodeIntegration] Authentication test successful');
                     return true;
+                } else {
+                    console.log('[ClaudeCodeIntegration] Authentication failed - exit code or invalid response');
+                    return false;
                 }
             } catch (error) {
+                // Restore initialized state in case of error
+                this.initialized = false;
                 console.log('[ClaudeCodeIntegration] Quick inference test failed:', error.message);
                 
                 // If it's a timeout, it means Claude CLI is waiting for authentication
@@ -189,102 +207,31 @@ export class ClaudeCodeIntegration {
             throw new Error('Claude Code integration not initialized');
         }
 
-        return new Promise((resolve, reject) => {
-            // Separate prompt from other arguments
-            let prompt = null;
-            const commandArgs = [];
+        try {
+            // Use execSync approach exactly like the working example
+            const cp = await import('child_process');
+            const execSync = cp.execSync;
             
-            // Look for the prompt (first non-flag argument)
-            let promptFound = false;
-            for (let i = 0; i < args.length; i++) {
-                const arg = args[i];
-                if (!arg.startsWith('-') && !promptFound) {
-                    prompt = arg;
-                    promptFound = true;
-                } else {
-                    commandArgs.push(arg);
-                }
-            }
-
-            // Add dangerously-skip-permissions if not already present
-            if (!commandArgs.includes('--dangerously-skip-permissions') && 
-                !commandArgs.includes('--permission-mode')) {
-                commandArgs.push('--dangerously-skip-permissions');
-            }
-
-            // Create the spawn arguments
-            const spawnArgs = [this.config.claudeCommand, ...commandArgs];
+            // Build command string exactly like working example
+            const commandStr = `claude ${args.join(' ')}`;
+            console.log('[ClaudeCodeIntegration] Executing:', commandStr);
             
-            console.log('[ClaudeCodeIntegration] Executing:', spawnArgs.join(' '));
-            if (prompt) {
-                console.log('[ClaudeCodeIntegration] With prompt:', prompt.substring(0, 100) + '...');
-            }
-
-            const claudeProcess = spawn(spawnArgs[0], spawnArgs.slice(1), {
-                stdio: ['pipe', 'pipe', 'pipe'],
-                cwd: options.cwd || process.cwd(),
-                env: { ...process.env, ...options.env }
-            });
-
-            let stdout = '';
-            let stderr = '';
-
-            claudeProcess.stdout.on('data', (data) => {
-                stdout += data.toString();
-            });
-
-            claudeProcess.stderr.on('data', (data) => {
-                stderr += data.toString();
-            });
-
-            // Set timeout
-            const timeout = setTimeout(() => {
-                claudeProcess.kill('SIGTERM');
-                reject(new Error(`Command timed out after ${this.config.timeout}ms`));
-            }, this.config.timeout);
-
-            claudeProcess.on('close', (code) => {
-                clearTimeout(timeout);
-                
-                console.log('[ClaudeCodeIntegration] Command finished with code:', code);
-                console.log('[ClaudeCodeIntegration] Stdout length:', stdout.length);
-                if (stderr) {
-                    console.log('[ClaudeCodeIntegration] Stderr:', stderr.substring(0, 200));
-                }
-                
-                // If we have stdout, consider it a success
-                if (stdout.trim().length > 0) {
-                    resolve(stdout);
-                } else if (code === 0) {
-                    resolve(stdout);
-                } else {
-                    // Check for specific error patterns
-                    if (stderr.includes('Raw mode is not supported')) {
-                        reject(new Error('Claude CLI has raw mode issues in this environment'));
-                    } else if (stderr.includes('not authenticated') || stderr.includes('authentication')) {
-                        reject(new Error('Claude CLI authentication failed - please run `claude setup-token`'));
-                    } else {
-                        reject(new Error(`Claude CLI exited with code ${code}: ${stderr}`));
-                    }
-                }
-            });
-
-            claudeProcess.on('error', (error) => {
-                clearTimeout(timeout);
-                reject(new Error(`Failed to spawn Claude CLI: ${error.message}`));
-            });
-
-            // Send prompt via stdin if provided
-            if (prompt) {
-                claudeProcess.stdin.write(prompt);
-                claudeProcess.stdin.end();
-            } else if (options.input) {
-                claudeProcess.stdin.write(options.input);
-                claudeProcess.stdin.end();
-            } else {
-                claudeProcess.stdin.end();
-            }
-        });
+            const stdout = execSync(commandStr, { encoding: "utf8" });
+            
+            return {
+                output: stdout.trim(),
+                stderr: '',
+                exitCode: 0
+            };
+            
+        } catch (error) {
+            console.log('[ClaudeCodeIntegration] Command failed:', error.message);
+            return {
+                output: error.stdout ? error.stdout.toString().trim() : '',
+                stderr: error.stderr ? error.stderr.toString().trim() : error.message,
+                exitCode: error.status || 1
+            };
+        }
     }
 
     /**
@@ -463,6 +410,270 @@ export class ClaudeCodeIntegration {
             config: {
                 timeout: this.config.timeout
             }
+        };
+    }
+
+    /**
+     * Execute system function through Claude Code bridge
+     * This replaces direct API token usage for all LLM operations
+     */
+    async executeSystemFunction(params) {
+        const { 
+            functionType,    // e.g., 'PM:FRD::ANALYSIS'
+            template,        // The specific template for this function
+            context,         // Project context data  
+            data,           // Input data for the function
+            options = {}     // Additional options like model, temperature, etc.
+        } = params;
+
+        if (!this.initialized) {
+            throw new Error('Claude Code integration not initialized');
+        }
+
+        try {
+            // Format the prompt based on function type
+            const prompt = this.formatSystemFunctionPrompt(functionType, template, context, data);
+            
+            // Execute via Claude Code
+            const response = await this.executeCommand({
+                args: ['--dangerously-skip-permissions', prompt],
+                ...options
+            });
+
+            // Post-process response based on function type
+            return this.processSystemFunctionResponse(functionType, response);
+        } catch (error) {
+            console.error(`[ClaudeCodeIntegration] System function ${functionType} failed:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Format prompt for system functions
+     */
+    formatSystemFunctionPrompt(functionType, template, context, data) {
+        const basePrompt = `You are executing the Cofounder system function: ${functionType}
+
+Context:
+${JSON.stringify(context, null, 2)}
+
+Input Data:
+${JSON.stringify(data, null, 2)}
+
+Template/Instructions:
+${template}
+
+Please generate the appropriate output for this system function following the template exactly.`;
+
+        // Function-specific prompt enhancements
+        switch (functionType.split('::')[0]) {
+            case 'PM:PRD':
+            case 'PM:FRD':
+            case 'PM:DRD':
+            case 'PM:BRD':
+            case 'PM:UXSMD':
+            case 'PM:UXDMD':
+                return basePrompt + `\n\nOutput should be a well-structured document in markdown format.`;
+                
+            case 'BACKEND:OPENAPI':
+            case 'BACKEND:ASYNCAPI':
+                return basePrompt + `\n\nOutput should be valid OpenAPI/AsyncAPI specification in JSON format.`;
+                
+            case 'BACKEND:SERVER':
+            case 'WEBAPP:STORE':
+            case 'WEBAPP:ROOT':
+            case 'WEBAPP:VIEW':
+                return basePrompt + `\n\nOutput should be clean, production-ready code with proper imports and exports.`;
+                
+            case 'DB:SCHEMAS':
+            case 'DB:POSTGRES':
+                return basePrompt + `\n\nOutput should be valid SQL schema definitions.`;
+                
+            case 'UX:SITEMAP':
+            case 'UX:DATAMAP':
+                return basePrompt + `\n\nOutput should be structured JSON representing the site/data architecture.`;
+                
+            case 'SWARM:REVIEW':
+            case 'SWARM:AUGMENT':
+            case 'SWARM:FIX':
+                return basePrompt + `\n\nOutput should include detailed analysis and code improvements.`;
+                
+            default:
+                return basePrompt;
+        }
+    }
+
+    /**
+     * Process response from system functions
+     */
+    processSystemFunctionResponse(functionType, response) {
+        try {
+            // Clean up response - remove any Claude Code metadata
+            let cleanResponse = response.trim();
+            
+            // Remove common Claude Code response artifacts
+            if (cleanResponse.includes('```')) {
+                // Extract code blocks if present
+                const codeBlockRegex = /```(?:\w+)?\n([\s\S]*?)```/g;
+                const matches = [...cleanResponse.matchAll(codeBlockRegex)];
+                if (matches.length > 0) {
+                    cleanResponse = matches.map(match => match[1]).join('\n\n');
+                }
+            }
+
+            // Function-specific response processing
+            const category = functionType.split('::')[0];
+            
+            switch (category) {
+                case 'BACKEND:OPENAPI':
+                case 'BACKEND:ASYNCAPI':
+                case 'UX:SITEMAP':
+                case 'UX:DATAMAP':
+                    // Try to parse as JSON
+                    try {
+                        return JSON.parse(cleanResponse);
+                    } catch {
+                        // If not valid JSON, return as-is
+                        return cleanResponse;
+                    }
+                    
+                case 'DB:SCHEMAS':
+                case 'DB:POSTGRES':
+                    // Return SQL as-is
+                    return cleanResponse;
+                    
+                default:
+                    // Return processed text
+                    return cleanResponse;
+            }
+        } catch (error) {
+            console.error(`[ClaudeCodeIntegration] Response processing failed for ${functionType}:`, error);
+            return response; // Return original response as fallback
+        }
+    }
+
+    /**
+     * Get function-specific configuration
+     */
+    getFunctionConfig(functionType) {
+        const configs = {
+            // Product Management functions
+            'PM:PRD::ANALYSIS': {
+                model: 'claude-3',
+                temperature: 0.7,
+                maxTokens: 4000
+            },
+            'PM:FRD::ANALYSIS': {
+                model: 'claude-3',
+                temperature: 0.5,
+                maxTokens: 4000
+            },
+            'PM:DRD::ANALYSIS': {
+                model: 'claude-3',
+                temperature: 0.3,
+                maxTokens: 3000
+            },
+            'PM:BRD::ANALYSIS': {
+                model: 'claude-3',
+                temperature: 0.6,
+                maxTokens: 3000
+            },
+            'PM:UXSMD::ANALYSIS': {
+                model: 'claude-3',
+                temperature: 0.8,
+                maxTokens: 4000
+            },
+            'PM:UXDMD::ANALYSIS': {
+                model: 'claude-3',
+                temperature: 0.8,
+                maxTokens: 4000
+            },
+            
+            // Backend functions
+            'BACKEND:OPENAPI::DEFINE': {
+                model: 'claude-3',
+                temperature: 0.2,
+                maxTokens: 3000
+            },
+            'BACKEND:ASYNCAPI::DEFINE': {
+                model: 'claude-3',
+                temperature: 0.2,
+                maxTokens: 3000
+            },
+            'BACKEND:SERVER::GENERATE': {
+                model: 'claude-3',
+                temperature: 0.3,
+                maxTokens: 6000
+            },
+            
+            // Frontend functions
+            'WEBAPP:STORE::GENERATE': {
+                model: 'claude-3',
+                temperature: 0.3,
+                maxTokens: 4000
+            },
+            'WEBAPP:ROOT::GENERATE': {
+                model: 'claude-3',
+                temperature: 0.4,
+                maxTokens: 4000
+            },
+            'WEBAPP:VIEW::GENERATE:MULTI': {
+                model: 'claude-3',
+                temperature: 0.4,
+                maxTokens: 8000
+            },
+            
+            // Database functions
+            'DB:SCHEMAS::GENERATE': {
+                model: 'claude-3',
+                temperature: 0.2,
+                maxTokens: 2000
+            },
+            'DB:POSTGRES::GENERATE': {
+                model: 'claude-3',
+                temperature: 0.2,
+                maxTokens: 3000
+            },
+            
+            // UX functions
+            'UX:SITEMAP::STRUCTURE': {
+                model: 'claude-3',
+                temperature: 0.5,
+                maxTokens: 2000
+            },
+            'UX:DATAMAP::STRUCTURE': {
+                model: 'claude-3',
+                temperature: 0.4,
+                maxTokens: 2000
+            },
+            'UX:DATAMAP::VIEWS': {
+                model: 'claude-3',
+                temperature: 0.4,
+                maxTokens: 3000
+            },
+            
+            // Quality assurance functions
+            'SWARM:REVIEW': {
+                model: 'claude-3',
+                temperature: 0.3,
+                maxTokens: 4000
+            },
+            'SWARM:AUGMENT': {
+                model: 'claude-3',
+                temperature: 0.6,
+                maxTokens: 4000
+            },
+            'SWARM:FIX': {
+                model: 'claude-3',
+                temperature: 0.4,
+                maxTokens: 4000
+            }
+        };
+
+        return configs[functionType] || {
+            model: 'claude-3',
+            temperature: 0.5,
+            maxTokens: 4000
         };
     }
 

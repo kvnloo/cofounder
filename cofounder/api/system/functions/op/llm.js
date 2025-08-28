@@ -57,34 +57,72 @@ async function opLlmGen({ context, data }) {
 		parser = utils.parsers.parse.yaml;
 	}
 
-	// Use new unified LLM service with auth providers
-	// Falls back to legacy providers if AUTH_PROVIDER is not set or fails
+	// Use Claude Code integration first, then unified LLM service, then legacy providers
 	let text, usage;
+	
+	// Try Claude Code integration first if available
 	try {
-		const result = await utils.llm.inference({
-			model: model,
-			messages,
-			stream,
-		});
-		text = result.text;
-		usage = result.usage;
-	} catch (error) {
-		console.warn('[op:LLM::GEN] Unified LLM service failed, falling back to legacy providers:', error.message);
+		const { ClaudeCodeIntegration } = await import('../../../utils/claude-code-integration.js');
+		const claudeCode = new ClaudeCodeIntegration();
 		
-		// Fallback to legacy provider selection
-		const llm_fn = !process.env.LLM_PROVIDER
-			? utils.openai.inference
-			: process.env.LLM_PROVIDER.toLowerCase() === "openai"
-				? utils.openai.inference
-				: utils.anthropic.inference;
+		if (claudeCode.initialized || await claudeCode.initialize().catch(() => false)) {
+			console.log('[op:LLM::GEN] Using Claude Code integration');
+			
+			// Convert messages to a prompt format for Claude Code
+			const prompt = messages.map(msg => {
+				if (msg.role === 'system') {
+					return `System: ${msg.content}`;
+				} else if (msg.role === 'user') {
+					return `User: ${msg.content}`;
+				} else if (msg.role === 'assistant') {
+					return `Assistant: ${msg.content}`;
+				}
+				return msg.content;
+			}).join('\n\n');
 
-		const result = await llm_fn({
-			model: model,
-			messages,
-			stream,
-		});
-		text = result.text;
-		usage = result.usage;
+			const result = await claudeCode.executeCommand(
+				['--dangerously-skip-permissions', prompt],
+				{ 
+					model: model,
+					stream: stream === process.stdout ? false : !!stream // Convert stream to boolean
+				}
+			);
+
+			text = result.output || result;
+			usage = result.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+		} else {
+			throw new Error('Claude Code integration not available');
+		}
+	} catch (claudeError) {
+		console.warn('[op:LLM::GEN] Claude Code integration failed, falling back to unified LLM service:', claudeError.message);
+		
+		// Fallback to unified LLM service
+		try {
+			const result = await utils.llm.inference({
+				model: model,
+				messages,
+				stream,
+			});
+			text = result.text;
+			usage = result.usage;
+		} catch (error) {
+			console.warn('[op:LLM::GEN] Unified LLM service failed, falling back to legacy providers:', error.message);
+			
+			// Final fallback to legacy provider selection
+			const llm_fn = !process.env.LLM_PROVIDER
+				? utils.openai.inference
+				: process.env.LLM_PROVIDER.toLowerCase() === "openai"
+					? utils.openai.inference
+					: utils.anthropic.inference;
+
+			const result = await llm_fn({
+				model: model,
+				messages,
+				stream,
+			});
+			text = result.text;
+			usage = result.usage;
+		}
 	}
 
 	if (operation && streams) {
@@ -131,7 +169,30 @@ async function opLlmVectorizeChunk({ context, data }) {
 	*/
 	const { texts } = data;
 	
-	// Try unified LLM service first, fallback to OpenAI
+	// Try Claude Code integration first if available
+	try {
+		const { ClaudeCodeIntegration } = await import('../../../utils/claude-code-integration.js');
+		const claudeCode = new ClaudeCodeIntegration();
+		
+		if (claudeCode.initialized || await claudeCode.initialize().catch(() => false)) {
+			console.log('[op:LLM::VECTORIZE:CHUNK] Using Claude Code integration for vectorization');
+			
+			// Create a prompt for vectorization (Claude Code doesn't have direct vectorization, so we'll use embeddings via prompt)
+			const prompt = `Generate vector embeddings for the following texts. Return as JSON array of numbers for each text:\n\nTexts:\n${texts.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
+			
+			const result = await claudeCode.executeCommand({
+				args: ['--dangerously-skip-permissions', prompt],
+			});
+			
+			// Note: This is a simplified approach - in practice, vectorization might need a specialized endpoint
+			// For now, fall back to unified LLM service for vectorization
+			throw new Error('Claude Code vectorization not implemented, using fallback');
+		}
+	} catch (claudeError) {
+		console.warn('[op:LLM::VECTORIZE:CHUNK] Claude Code integration not available for vectorization, using unified LLM service:', claudeError.message);
+	}
+	
+	// Fallback to unified LLM service, then OpenAI
 	try {
 		return await utils.llm.vectorize({ texts });
 	} catch (error) {

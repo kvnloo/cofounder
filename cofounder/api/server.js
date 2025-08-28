@@ -232,28 +232,83 @@ app.post("/api/auth/switch-provider", async (req, res) => {
 	}
 });
 
-// Claude Code Bridge Endpoints
-import ClaudeCodeBridge from './utils/claude-code-bridge.js';
+// Claude Code Integration Endpoints
+import { ClaudeCodeIntegration } from './utils/claude-code-integration.js';
 
-// Initialize Claude Code bridge
-const claudeCodeBridge = new ClaudeCodeBridge({
-	workspacePath: process.cwd()
-});
+// Initialize Claude Code integration
+const claudeCodeIntegration = new ClaudeCodeIntegration();
 
-// Check Claude Code bridge status
+// Initialize the integration on startup
+(async () => {
+	try {
+		await claudeCodeIntegration.initialize();
+	} catch (error) {
+		console.warn('[Server] Claude Code integration not available:', error.message);
+	}
+})();
+
+// Check Claude Code integration status
 app.get("/api/claude-code/status", async (req, res) => {
 	try {
-		const workspaceInfo = await claudeCodeBridge.getWorkspaceInfo();
-		res.json({
-			available: claudeCodeBridge.isAvailable(),
-			...workspaceInfo
-		});
+		const status = {
+			available: claudeCodeIntegration.initialized,
+			authenticated: false
+		};
+		
+		if (claudeCodeIntegration.initialized) {
+			status.authenticated = await claudeCodeIntegration.checkAuthentication();
+		}
+		
+		res.json(status);
 	} catch (error) {
 		res.status(500).json({ error: error.message });
 	}
 });
 
-// Generate PRD using Claude Code
+// Simple test endpoint to run claude -p "say hi" directly
+app.get("/api/claude-code/test", async (req, res) => {
+	try {
+		const { spawn } = await import('child_process');
+		
+		const claudeProcess = spawn('claude', ['-p', 'say hi'], {
+			stdio: ['pipe', 'pipe', 'pipe'],
+			env: process.env
+		});
+		
+		let stdout = '';
+		let stderr = '';
+		
+		claudeProcess.stdout.on('data', (data) => {
+			stdout += data.toString();
+		});
+		
+		claudeProcess.stderr.on('data', (data) => {
+			stderr += data.toString();
+		});
+		
+		claudeProcess.on('close', (code) => {
+			res.json({
+				command: 'claude -p "say hi"',
+				exitCode: code,
+				stdout: stdout,
+				stderr: stderr,
+				success: code === 0
+			});
+		});
+		
+		claudeProcess.on('error', (error) => {
+			res.status(500).json({
+				command: 'claude -p "say hi"',
+				error: error.message
+			});
+		});
+		
+	} catch (error) {
+		res.status(500).json({ error: error.message });
+	}
+});
+
+// Generate PRD using Claude Code (legacy endpoint - use execute-function instead)
 app.post("/api/claude-code/generate-prd", async (req, res) => {
 	try {
 		const projectData = req.body;
@@ -264,10 +319,57 @@ app.post("/api/claude-code/generate-prd", async (req, res) => {
 			});
 		}
 
-		const result = await claudeCodeBridge.generatePRD(projectData);
+		// Use the new unified system function approach
+		const result = await claudeCodeIntegration.executeSystemFunction({
+			functionType: 'PM:PRD::ANALYSIS',
+			template: 'prd_template', // Will be loaded from templates
+			context: { project: projectData.name },
+			data: projectData
+		});
+		
 		res.json(result);
 	} catch (error) {
 		res.status(500).json({ error: error.message });
+	}
+});
+
+// Unified endpoint for executing any system function via Claude Code
+app.post("/api/claude-code/execute-function", async (req, res) => {
+	try {
+		const { functionType, template, context, data, options } = req.body;
+		
+		if (!functionType) {
+			return res.status(400).json({
+				error: "functionType is required (e.g., 'PM:PRD::ANALYSIS', 'DB:SCHEMAS::GENERATE')"
+			});
+		}
+
+		if (!claudeCodeIntegration.initialized) {
+			return res.status(503).json({
+				error: "Claude Code integration is not available"
+			});
+		}
+
+		const result = await claudeCodeIntegration.executeSystemFunction({
+			functionType,
+			template,
+			context: context || {},
+			data: data || {},
+			options: options || {}
+		});
+		
+		res.json({
+			success: true,
+			functionType,
+			result
+		});
+	} catch (error) {
+		console.error(`[API] System function execution failed (${req.body.functionType}):`, error);
+		res.status(500).json({ 
+			success: false,
+			error: error.message,
+			functionType: req.body.functionType
+		});
 	}
 });
 
@@ -282,11 +384,21 @@ app.post("/api/claude-code/send-prompt", async (req, res) => {
 			});
 		}
 
-		const result = await claudeCodeBridge.sendPrompt(prompt, {
-			projectPath,
-			continueConversation,
-			allowedTools
+		if (!claudeCodeIntegration.initialized) {
+			return res.status(503).json({
+				error: "Claude Code integration is not available"
+			});
+		}
+
+		const result = await claudeCodeIntegration.executeCommand({
+			args: ['--dangerously-skip-permissions', prompt],
+			options: {
+				projectPath,
+				continueConversation,
+				allowedTools
+			}
 		});
+		
 		res.json(result);
 	} catch (error) {
 		res.status(500).json({ error: error.message });
@@ -304,7 +416,14 @@ app.post("/api/claude-code/deploy-project", async (req, res) => {
 			});
 		}
 
-		const result = await claudeCodeBridge.deployProject(projectData);
+		if (!claudeCodeIntegration.initialized) {
+			return res.status(503).json({
+				error: "Claude Code integration is not available"
+			});
+		}
+
+		// Use the deployment functionality from the integration
+		const result = await claudeCodeIntegration.deployProject(projectData);
 		res.json(result);
 	} catch (error) {
 		res.status(500).json({ error: error.message });
