@@ -93,48 +93,90 @@ export class ClaudeCodeIntegration {
      */
     async checkAuthentication() {
         try {
-            // Use a simple test that avoids interactive mode issues
-            return new Promise((resolve) => {
-                const testProcess = spawn('bash', ['-c', `echo "test" | ${this.config.claudeCommand} -p --dangerously-skip-permissions`], {
+            // First check if Claude CLI responds to basic commands (faster test)
+            const configResult = await new Promise((resolve) => {
+                const configProcess = spawn(this.config.claudeCommand, ['config', 'list'], {
                     stdio: ['pipe', 'pipe', 'pipe'],
-                    timeout: 5000,
-                    env: { ...process.env }
+                    timeout: 3000
                 });
-
+                
                 let stdout = '';
                 let stderr = '';
-
-                testProcess.stdout.on('data', (data) => {
-                    stdout += data.toString();
-                });
-
-                testProcess.stderr.on('data', (data) => {
-                    stderr += data.toString();
-                });
-
+                
+                configProcess.stdout.on('data', (data) => stdout += data.toString());
+                configProcess.stderr.on('data', (data) => stderr += data.toString());
+                
                 const timeout = setTimeout(() => {
-                    testProcess.kill('SIGTERM');
-                    // If it hangs, assume it's working but in interactive mode
-                    resolve(true);
-                }, 5000);
-
-                testProcess.on('close', (code) => {
+                    configProcess.kill('SIGTERM');
+                    resolve({ success: false, error: 'Config command timeout' });
+                }, 3000);
+                
+                configProcess.on('close', (code) => {
                     clearTimeout(timeout);
-                    // If we get any response (even an error), CLI is available
-                    // If it's a raw mode error, that's actually good - CLI is there
-                    if (stderr.includes('Raw mode is not supported') || stdout.length > 0 || code === 0) {
-                        resolve(true);
-                    } else {
-                        resolve(false);
-                    }
+                    resolve({ 
+                        success: code === 0, 
+                        stdout, 
+                        stderr, 
+                        code 
+                    });
                 });
-
-                testProcess.on('error', () => {
+                
+                configProcess.on('error', (error) => {
                     clearTimeout(timeout);
-                    resolve(false);
+                    resolve({ success: false, error: error.message });
                 });
             });
+            
+            if (!configResult.success) {
+                console.log('[ClaudeCodeIntegration] Config command failed:', configResult.error);
+                return false;
+            }
+            
+            console.log('[ClaudeCodeIntegration] Claude CLI config accessible');
+            
+            // Now try a quick inference test with a very short timeout
+            try {
+                const response = await Promise.race([
+                    this.executeCommand(['--print', 'hi'], {}),
+                    new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Inference test timeout')), 5000)
+                    )
+                ]);
+                
+                if (response && response.trim().length > 0) {
+                    console.log('[ClaudeCodeIntegration] Authentication test successful');
+                    return true;
+                }
+            } catch (error) {
+                console.log('[ClaudeCodeIntegration] Quick inference test failed:', error.message);
+                
+                // If it's a timeout, it means Claude CLI is waiting for authentication
+                if (error.message.includes('timeout')) {
+                    console.log('[ClaudeCodeIntegration] Claude CLI appears to need authentication setup');
+                    return false;
+                }
+                
+                // Check for specific authentication errors
+                if (error.message.includes('not authenticated') || 
+                    error.message.includes('authentication') ||
+                    error.message.includes('login') ||
+                    error.message.includes('token')) {
+                    return false;
+                }
+                
+                // For raw mode issues, Claude is available but has display problems
+                if (error.message.includes('Raw mode is not supported')) {
+                    console.log('[ClaudeCodeIntegration] Raw mode issue detected, CLI available but may have display issues');
+                    return true;
+                }
+            }
+            
+            // If config works but inference doesn't, likely needs authentication
+            console.log('[ClaudeCodeIntegration] Claude CLI available but may need authentication (run `claude setup-token`)');
+            return false;
+            
         } catch (error) {
+            console.log('[ClaudeCodeIntegration] Authentication check failed:', error.message);
             return false;
         }
     }
@@ -147,68 +189,100 @@ export class ClaudeCodeIntegration {
             throw new Error('Claude Code integration not initialized');
         }
 
-        // Use bash to execute the command to preserve environment
-        // Add dangerously-skip-permissions to avoid interactive prompts
-        const safeArgs = [...args];
-        if (!safeArgs.includes('--dangerously-skip-permissions') && !safeArgs.includes('--permission-mode')) {
-            safeArgs.push('--dangerously-skip-permissions');
-        }
-        
-        const command = `${this.config.claudeCommand} ${safeArgs.map(arg => `"${arg.replace(/"/g, '\\"')}"`).join(' ')}`;
-        
         return new Promise((resolve, reject) => {
-            const bashProcess = spawn('bash', ['-c', command], {
+            // Separate prompt from other arguments
+            let prompt = null;
+            const commandArgs = [];
+            
+            // Look for the prompt (first non-flag argument)
+            let promptFound = false;
+            for (let i = 0; i < args.length; i++) {
+                const arg = args[i];
+                if (!arg.startsWith('-') && !promptFound) {
+                    prompt = arg;
+                    promptFound = true;
+                } else {
+                    commandArgs.push(arg);
+                }
+            }
+
+            // Add dangerously-skip-permissions if not already present
+            if (!commandArgs.includes('--dangerously-skip-permissions') && 
+                !commandArgs.includes('--permission-mode')) {
+                commandArgs.push('--dangerously-skip-permissions');
+            }
+
+            // Create the spawn arguments
+            const spawnArgs = [this.config.claudeCommand, ...commandArgs];
+            
+            console.log('[ClaudeCodeIntegration] Executing:', spawnArgs.join(' '));
+            if (prompt) {
+                console.log('[ClaudeCodeIntegration] With prompt:', prompt.substring(0, 100) + '...');
+            }
+
+            const claudeProcess = spawn(spawnArgs[0], spawnArgs.slice(1), {
                 stdio: ['pipe', 'pipe', 'pipe'],
                 cwd: options.cwd || process.cwd(),
-                env: { ...process.env, ...options.env },
-                shell: false
+                env: { ...process.env, ...options.env }
             });
 
             let stdout = '';
             let stderr = '';
 
-            bashProcess.stdout.on('data', (data) => {
+            claudeProcess.stdout.on('data', (data) => {
                 stdout += data.toString();
             });
 
-            bashProcess.stderr.on('data', (data) => {
+            claudeProcess.stderr.on('data', (data) => {
                 stderr += data.toString();
             });
 
             // Set timeout
             const timeout = setTimeout(() => {
-                bashProcess.kill('SIGTERM');
+                claudeProcess.kill('SIGTERM');
                 reject(new Error(`Command timed out after ${this.config.timeout}ms`));
             }, this.config.timeout);
 
-            bashProcess.on('close', (code) => {
+            claudeProcess.on('close', (code) => {
                 clearTimeout(timeout);
                 
-                // If we have stdout, consider it a success even if exit code isn't 0
-                // This handles cases where Claude CLI works but has raw mode issues
+                console.log('[ClaudeCodeIntegration] Command finished with code:', code);
+                console.log('[ClaudeCodeIntegration] Stdout length:', stdout.length);
+                if (stderr) {
+                    console.log('[ClaudeCodeIntegration] Stderr:', stderr.substring(0, 200));
+                }
+                
+                // If we have stdout, consider it a success
                 if (stdout.trim().length > 0) {
                     resolve(stdout);
                 } else if (code === 0) {
                     resolve(stdout);
                 } else {
-                    // Check if this is just a raw mode error (not an authentication error)
+                    // Check for specific error patterns
                     if (stderr.includes('Raw mode is not supported')) {
-                        reject(new Error('Claude CLI has raw mode issues in this environment, but is available'));
+                        reject(new Error('Claude CLI has raw mode issues in this environment'));
+                    } else if (stderr.includes('not authenticated') || stderr.includes('authentication')) {
+                        reject(new Error('Claude CLI authentication failed - please run `claude setup-token`'));
                     } else {
                         reject(new Error(`Claude CLI exited with code ${code}: ${stderr}`));
                     }
                 }
             });
 
-            bashProcess.on('error', (error) => {
+            claudeProcess.on('error', (error) => {
                 clearTimeout(timeout);
-                reject(new Error(`Failed to spawn bash for Claude CLI: ${error.message}`));
+                reject(new Error(`Failed to spawn Claude CLI: ${error.message}`));
             });
 
-            // Send input if provided
-            if (options.input) {
-                bashProcess.stdin.write(options.input);
-                bashProcess.stdin.end();
+            // Send prompt via stdin if provided
+            if (prompt) {
+                claudeProcess.stdin.write(prompt);
+                claudeProcess.stdin.end();
+            } else if (options.input) {
+                claudeProcess.stdin.write(options.input);
+                claudeProcess.stdin.end();
+            } else {
+                claudeProcess.stdin.end();
             }
         });
     }
@@ -228,19 +302,8 @@ export class ClaudeCodeIntegration {
             allowedTools
         } = options;
 
-        // Build Claude CLI arguments
-        const args = ['-p']; // Print mode for non-interactive response
-
-        // Add the main message/prompt
-        if (messages && messages.length > 0) {
-            // Get the last user message
-            const userMessage = messages[messages.length - 1];
-            if (userMessage && userMessage.content) {
-                args.push(userMessage.content);
-            }
-        } else if (options.prompt) {
-            args.push(options.prompt);
-        }
+        // Build Claude CLI arguments (flags only, prompt will be handled separately)
+        const args = ['--print']; // Use print mode for non-interactive response
 
         // Add system prompt if provided
         if (systemPrompt) {
@@ -249,12 +312,42 @@ export class ClaudeCodeIntegration {
 
         // Add allowed tools if provided
         if (allowedTools && allowedTools.length > 0) {
-            args.push('--allowedTools', allowedTools.join(','));
+            args.push('--allowed-tools', allowedTools.join(','));
         }
 
         // Set permission mode for tool usage
         if (tools && tools.length > 0) {
             args.push('--permission-mode', 'acceptEdits');
+        }
+
+        // Add model if specified
+        if (model) {
+            args.push('--model', model);
+        }
+
+        // Extract the prompt
+        let prompt = '';
+        if (messages && messages.length > 0) {
+            // Get the last user message
+            const userMessage = messages[messages.length - 1];
+            if (userMessage && userMessage.content) {
+                if (typeof userMessage.content === 'string') {
+                    prompt = userMessage.content;
+                } else if (Array.isArray(userMessage.content)) {
+                    // Handle multimodal content
+                    prompt = userMessage.content
+                        .filter(item => item.type === 'text')
+                        .map(item => item.text)
+                        .join('\n');
+                }
+            }
+        } else if (options.prompt) {
+            prompt = options.prompt;
+        }
+
+        // Add prompt as the last argument (this will be handled specially by executeCommand)
+        if (prompt) {
+            args.push(prompt);
         }
 
         try {
@@ -266,7 +359,7 @@ export class ClaudeCodeIntegration {
                     text: response.trim()
                 }],
                 role: 'assistant',
-                model: 'claude-via-cli',
+                model: model || 'claude-via-cli',
                 usage: {
                     input_tokens: 0, // Claude CLI doesn't provide token counts
                     output_tokens: 0

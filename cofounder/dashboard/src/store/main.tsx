@@ -12,6 +12,12 @@ const initialState = {
 	projectData: {},
 	nodesKeys: [] as string[],
 	nodesKeysDict: {},
+	loading: {
+		isLoading: false,
+		progress: 0,
+		message: "",
+		error: null
+	},
 };
 
 // Create a slice for the store
@@ -94,6 +100,26 @@ const projectSlice = createSlice({
 			}
 			*/
 		},
+		setLoadingStart(state, action) {
+			state.loading.isLoading = true;
+			state.loading.progress = 0;
+			state.loading.message = action.payload.message || "Loading...";
+			state.loading.error = null;
+		},
+		setLoadingProgress(state, action) {
+			state.loading.progress = action.payload.progress || 0;
+			state.loading.message = action.payload.message || state.loading.message;
+		},
+		setLoadingComplete(state, action) {
+			state.loading.isLoading = false;
+			state.loading.progress = 100;
+			state.loading.message = action.payload.message || "Complete";
+		},
+		setLoadingError(state, action) {
+			state.loading.isLoading = false;
+			state.loading.error = action.payload.error;
+			state.loading.message = "Error occurred";
+		},
 	},
 });
 
@@ -132,6 +158,27 @@ socket.on("stream$end", (message) => {
 socket.on("state$update", (message) => {
 	// console.log('> received stream data:', message); // {key,data}
 	store.dispatch(projectSlice.actions.updateProjectState(message));
+});
+
+// Loading event listeners
+socket.on("loading$start", (data) => {
+	console.log('> loading started:', data);
+	store.dispatch(projectSlice.actions.setLoadingStart(data));
+});
+
+socket.on("loading$progress", (data) => {
+	console.log('> loading progress:', data);
+	store.dispatch(projectSlice.actions.setLoadingProgress(data));
+});
+
+socket.on("loading$complete", (data) => {
+	console.log('> loading complete:', data);
+	store.dispatch(projectSlice.actions.setLoadingComplete(data));
+});
+
+socket.on("loading$error", (data) => {
+	console.log('> loading error:', data);
+	store.dispatch(projectSlice.actions.setLoadingError(data));
 });
 
 // Export the store and actions

@@ -81,46 +81,42 @@ export class AuthManager {
 	}
 
 	async _selectActiveProvider() {
-		// Prioritize Claude Code CLI if available (best user experience)
-		const claudeCodeCli = this.providers.get('claude-code-cli');
-		if (claudeCodeCli && await claudeCodeCli.isValid()) {
-			this.activeProvider = claudeCodeCli;
-			console.log('[AuthManager] Using Claude Code CLI provider (best option)');
-			return;
+		// Check if we're running inside Claude Code
+		const isInsideClaudeCode = !!(process.env.CLAUDECODE || process.env.CLAUDE_CODE_ENTRYPOINT);
+		
+		if (isInsideClaudeCode) {
+			console.log('[AuthManager] Running inside Claude Code - prioritizing API keys for non-Claude operations');
 		}
 
-		// Try preferred provider
-		const preferred = this.providers.get(this.preferredProviderType);
-		if (preferred && await preferred.isValid()) {
-			this.activeProvider = preferred;
-			return;
-		}
+		// Define priority order based on environment
+		const providerPriority = isInsideClaudeCode 
+			? ['api-key'] // Inside Claude Code: just use API keys for non-Claude operations
+			: (this.preferredProvider 
+				? [this.preferredProvider, 'claude-code-cli', 'claude-session', 'api-key']
+				: ['claude-code-cli', 'claude-session', 'api-key']);
 
-		// Fallback to any valid provider
-		if (this.fallbackEnabled) {
-			// Prefer claude-code-cli, then api-key, then claude-session
-			const preferenceOrder = ['claude-code-cli', 'api-key', 'claude-session'];
-			
-			for (const type of preferenceOrder) {
-				const provider = this.providers.get(type);
-				if (provider && await provider.isValid()) {
-					this.activeProvider = provider;
-					console.log(`[AuthManager] Falling back to provider: ${type}`);
-					return;
-				}
-			}
-
-			// If none from preference order work, try any remaining
-			for (const [type, provider] of this.providers) {
-				if (!preferenceOrder.includes(type) && await provider.isValid()) {
-					this.activeProvider = provider;
-					console.log(`[AuthManager] Falling back to provider: ${type}`);
-					return;
+		// Select the first available provider from priority list
+		for (const providerType of providerPriority) {
+			const provider = this.providers.get(providerType);
+			if (provider) {
+				try {
+					const isHealthy = await provider.isValid?.() ?? true;
+					if (isHealthy) {
+						this.activeProvider = provider;
+						this.activeProviderType = providerType;
+						console.log(`[AuthManager] Using ${providerType} provider${isInsideClaudeCode ? ' (Claude Code handles AI operations)' : ''}`);
+						return;
+					} else {
+						console.warn(`[AuthManager] Provider ${providerType} is not healthy, trying next option`);
+					}
+				} catch (error) {
+					console.warn(`[AuthManager] Provider ${providerType} validation failed:`, error.message);
 				}
 			}
 		}
 
-		throw new Error(`No valid authentication provider found. Preferred: ${this.preferredProviderType}`);
+		// If no provider is available, throw error
+		throw new Error('No healthy authentication provider available');
 	}
 
 	async switchProvider(providerType) {

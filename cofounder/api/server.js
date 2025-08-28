@@ -12,6 +12,9 @@ import { hideBin } from "yargs/helpers";
 import { merge } from "lodash-es";
 import open, { openApp, apps } from "open";
 import cofounder from "./build.js";
+import { analyzeProject } from "./system/functions/op/analyze.js";
+import { ASTAnalyzer } from "./system/functions/op/ast-analyzer.js";
+import { promises as fsPromises } from 'fs';
 dotenv.config();
 
 // ES module __dirname equivalent (only if not already defined)
@@ -229,6 +232,84 @@ app.post("/api/auth/switch-provider", async (req, res) => {
 	}
 });
 
+// Claude Code Bridge Endpoints
+import ClaudeCodeBridge from './utils/claude-code-bridge.js';
+
+// Initialize Claude Code bridge
+const claudeCodeBridge = new ClaudeCodeBridge({
+	workspacePath: process.cwd()
+});
+
+// Check Claude Code bridge status
+app.get("/api/claude-code/status", async (req, res) => {
+	try {
+		const workspaceInfo = await claudeCodeBridge.getWorkspaceInfo();
+		res.json({
+			available: claudeCodeBridge.isAvailable(),
+			...workspaceInfo
+		});
+	} catch (error) {
+		res.status(500).json({ error: error.message });
+	}
+});
+
+// Generate PRD using Claude Code
+app.post("/api/claude-code/generate-prd", async (req, res) => {
+	try {
+		const projectData = req.body;
+		
+		if (!projectData.name) {
+			return res.status(400).json({
+				error: "Project name is required"
+			});
+		}
+
+		const result = await claudeCodeBridge.generatePRD(projectData);
+		res.json(result);
+	} catch (error) {
+		res.status(500).json({ error: error.message });
+	}
+});
+
+// Send a prompt to Claude Code
+app.post("/api/claude-code/send-prompt", async (req, res) => {
+	try {
+		const { prompt, projectPath, continueConversation, allowedTools } = req.body;
+		
+		if (!prompt) {
+			return res.status(400).json({
+				error: "Prompt is required"
+			});
+		}
+
+		const result = await claudeCodeBridge.sendPrompt(prompt, {
+			projectPath,
+			continueConversation,
+			allowedTools
+		});
+		res.json(result);
+	} catch (error) {
+		res.status(500).json({ error: error.message });
+	}
+});
+
+// Deploy project to Claude Code workspace
+app.post("/api/claude-code/deploy-project", async (req, res) => {
+	try {
+		const projectData = req.body;
+		
+		if (!projectData.name || !projectData.files) {
+			return res.status(400).json({
+				error: "Project name and files are required"
+			});
+		}
+
+		const result = await claudeCodeBridge.deployProject(projectData);
+		res.json(result);
+	} catch (error) {
+		res.status(500).json({ error: error.message });
+	}
+});
 
 app.get("/api/projects/list", (req, res) => {
         fs.readdir("./db/projects", (err, files) => {
@@ -548,13 +629,34 @@ io.on("connection", async (socket) => {
                 }
                 subscriptions[project].push(socket.id);
                 try {
-                        await load_project({ project });
+                        // Emit loading start event
+                        io.to(subscriptions[project]).emit("loading$start", {
+                                timestamp: Date.now(),
+                                project: project,
+                                message: "Starting project analysis..."
+                        });
+                        
+                        await load_project({ project, socket: io.to(subscriptions[project]) });
+                        
+                        // Emit loading complete event
+                        io.to(subscriptions[project]).emit("loading$complete", {
+                                timestamp: Date.now(),
+                                project: project,
+                                message: "Analysis complete"
+                        });
+                        
                         io.to(subscriptions[project]).emit("state$load", {
                                 timestamp: Date.now(),
                                 state: projects[project],
                         });
                 } catch (e) {
                         console.error("> cofounder/api : server error : ", e);
+                        // Emit loading error event
+                        io.to(subscriptions[project]).emit("loading$error", {
+                                timestamp: Date.now(),
+                                project: project,
+                                error: e.message
+                        });
                 }
 
                 /*
@@ -666,125 +768,198 @@ io.on("connection", async (socket) => {
                 }
         });
 });
-const load_project = async ({ project }) => {
+
+// Function to generate individual file nodes for comprehensive display
+const generateIndividualFileNodes = async (projectPath) => {
+        const fileNodes = {};
+        const excludeDirs = ['node_modules', '.git', 'dist', '.next', 'build'];
+        const includeExtensions = ['.js', '.jsx', '.ts', '.tsx', '.py', '.md', '.json', '.yaml', '.yml', '.css', '.html'];
+        
+        async function walkDirectory(dir, prefix = '') {
+                try {
+                        const entries = await fsPromises.readdir(dir, { withFileTypes: true });
+                        
+                        for (const entry of entries) {
+                                const fullPath = path.join(dir, entry.name);
+                                const relativePath = path.relative(projectPath, fullPath);
+                                
+                                if (entry.isDirectory()) {
+                                        if (!excludeDirs.includes(entry.name) && !entry.name.startsWith('.')) {
+                                                await walkDirectory(fullPath, prefix + entry.name + '.');
+                                        }
+                                } else if (entry.isFile()) {
+                                        const ext = path.extname(entry.name);
+                                        if (includeExtensions.includes(ext)) {
+                                                const nodeKey = `file.${prefix}${entry.name.replace(/\./g, '_')}`;
+                                                const category = getFileCategory(relativePath, ext);
+                                                
+                                                fileNodes[nodeKey] = {
+                                                        type: 'yaml',
+                                                        content: {
+                                                                path: relativePath,
+                                                                name: entry.name,
+                                                                extension: ext,
+                                                                category: category,
+                                                                directory: path.dirname(relativePath),
+                                                                size: (await fsPromises.stat(fullPath)).size
+                                                        }
+                                                };
+                                        }
+                                }
+                        }
+                } catch (error) {
+                        console.error(`Error walking directory ${dir}:`, error);
+                }
+        }
+        
+        await walkDirectory(projectPath);
+        return fileNodes;
+};
+
+// Helper function to categorize files
+const getFileCategory = (filePath, ext) => {
+        if (filePath.includes('/api/')) {
+                if (filePath.includes('/system/functions/')) return 'system-function';
+                if (filePath.includes('/utils/')) return 'api-utility';
+                return 'api';
+        }
+        if (filePath.includes('/dashboard/')) {
+                if (filePath.includes('/components/')) return 'component';
+                if (filePath.includes('/views/')) return 'view';
+                return 'frontend';
+        }
+        if (filePath.includes('/docs/')) return 'documentation';
+        if (filePath.includes('/boilerplate/')) return 'boilerplate';
+        if (ext === '.md') return 'documentation';
+        if (['.js', '.jsx', '.ts', '.tsx'].includes(ext)) return 'code';
+        if (['.json', '.yaml', '.yml'].includes(ext)) return 'config';
+        if (ext === '.css') return 'style';
+        return 'other';
+};
+
+const load_project = async ({ project, socket }) => {
         console.log("> load_project : start : ", project);
         
         // Special handling for the cofounder project - analyze the actual codebase
         if (project === "cofounder") {
                 try {
-                        console.log("> Creating cofounder project blueprint...");
-                        const projectPath = path.join(__dirname, "../"); // Path to cofounder root
+                        console.log("> Analyzing cofounder project with AST analyzer...");
+                        const projectPath = path.join(__dirname, "../../"); // Path to cofounder project root
                         console.log("> Project path:", projectPath);
                         
-                        // Create a simplified blueprint for the cofounder project
-                        const blueprint = {
-                                name: "cofounder",
-                                description: "AI-powered application generator platform",
-                                structure: {
-                                        api: {
-                                                type: "backend",
-                                                framework: "express",
-                                                files: ["server.js", "build.js", "package.json"],
-                                                folders: ["system", "utils", "db", "dist"]
-                                        },
-                                        dashboard: {
-                                                type: "frontend", 
-                                                framework: "react",
-                                                files: ["package.json", "vite.config.ts"],
-                                                folders: ["src", "public"]
-                                        },
-                                        docs: {
-                                                type: "documentation",
-                                                folders: ["product-strategy", "requirements", "ux-design"]
-                                        }
-                                },
-                                technologies: ["Node.js", "Express", "React", "TypeScript", "Vite", "PostgreSQL"],
-                                features: [
-                                        "Multi-provider AI authentication",
-                                        "Real-time project generation",
-                                        "Project analysis and import",
-                                        "Blueprint visualization",
-                                        "Document generation (PRD, FRD, BRD, DRD, UXSMD)"
-                                ]
-                        };
+                        // Emit progress updates during analysis
+                        if (socket) {
+                                socket.emit("loading$progress", {
+                                        timestamp: Date.now(),
+                                        project: project,
+                                        message: "Starting AST analysis...",
+                                        progress: 10
+                                });
+                        }
                         
-                        // Structure the analyzed data to match the expected database format using standard blueprint keys
-                        const projectData = {
-                                "pm.details": {
-                                        latest: {
-                                                name: "cofounder",
-                                                description: "The Cofounder platform itself - a comprehensive tool for rapid prototyping",
-                                                path: projectPath,
-                                                isMetaProject: true,
-                                                timestamp: Date.now()
-                                        }
-                                },
-                                "pm.prd": {
-                                        latest: {
-                                                tsx: "# Cofounder Platform\n\nAI-powered application generator and development platform that enables rapid prototyping and full-stack application development through intelligent code generation and project analysis.",
-                                                timestamp: Date.now()
-                                        }
-                                },
-                                "pm.frd": {
-                                        latest: {
-                                                tsx: blueprint.features.map(feature => `- ${feature}`).join('\n'),
-                                                timestamp: Date.now()
-                                        }
-                                },
-                                "pm.brd": {
-                                        latest: {
-                                                tsx: `# Backend Requirements\n\n## Architecture\n- ${blueprint.structure.api.framework} server\n- ${blueprint.technologies.join(', ')}`,
-                                                timestamp: Date.now()
-                                        }
-                                },
-                                "backend.specifications.openapi": {
-                                        latest: {
-                                                tsx: JSON.stringify({
-                                                        openapi: "3.0.0",
-                                                        info: { title: "Cofounder API", version: "1.0.0" },
-                                                        paths: {}
-                                                }, null, 2),
-                                                timestamp: Date.now()
-                                        }
-                                },
-                                "uxsitemap.structure": {
-                                        latest: {
-                                                tsx: JSON.stringify(blueprint.structure.dashboard, null, 2),
-                                                timestamp: Date.now()
-                                        }
-                                },
-                                "webapp.react.root": {
-                                        latest: {
-                                                tsx: `# React Application Structure\n\nFramework: React\nFiles: ${blueprint.structure.dashboard.files.join(', ')}`,
-                                                timestamp: Date.now()
-                                        }
-                                },
-                                "settings.config.package": {
-                                        latest: {
-                                                tsx: `# Technologies & Dependencies\n\nTechnologies: ${blueprint.technologies.join(', ')}\n\nStructure:\n${JSON.stringify(blueprint.structure, null, 2)}`,
-                                                timestamp: Date.now()
-                                        }
-                                }
-                        };
+                        // Use the new AST analyzer for comprehensive analysis
+                        const astAnalyzer = new ASTAnalyzer(projectPath);
                         
-                        // Add database schema information
-                        projectData["db.schemas"] = {
-                                latest: {
-                                        tsx: "# Database Schemas\n\nProject data, user authentication, and document storage",
-                                        timestamp: Date.now()
-                                }
-                        };
+                        if (socket) {
+                                socket.emit("loading$progress", {
+                                        timestamp: Date.now(),
+                                        project: project,
+                                        message: "Analyzing JavaScript/TypeScript files...",
+                                        progress: 30
+                                });
+                        }
+                        
+                        const astAnalysis = await astAnalyzer.analyze();
+                        console.log(`> AST Analysis complete: ${astAnalysis.fileCount} files analyzed`);
+                        
+                        if (socket) {
+                                socket.emit("loading$progress", {
+                                        timestamp: Date.now(),
+                                        project: project,
+                                        message: "Detecting frameworks and dependencies...",
+                                        progress: 50
+                                });
+                        }
+                        
+                        // Also run the original analyzer for framework detection
+                        const analysisResult = await analyzeProject(projectPath);
+                        
+                        if (socket) {
+                                socket.emit("loading$progress", {
+                                        timestamp: Date.now(),
+                                        project: project,
+                                        message: "Generating individual file nodes...",
+                                        progress: 70
+                                });
+                        }
+                        
+                        // Convert AST analysis to node format
+                        const astNodes = {};
+                        for (const [filePath, fileData] of Object.entries(astAnalysis.files)) {
+                                const nodeKey = `file.${filePath.replace(/\//g, '.')}`;
+                                astNodes[nodeKey] = {
+                                        type: 'yaml',
+                                        content: {
+                                                path: filePath,
+                                                fileType: fileData.type,
+                                                depth: fileData.depth,
+                                                imports: fileData.imports,
+                                                exports: fileData.exports,
+                                                functions: fileData.functions,
+                                                classes: fileData.classes,
+                                                connections: fileData.connections
+                                        }
+                                };
+                        }
+                        
+                        console.log("> Found AST nodes:", Object.keys(astNodes).length);
+                        
+                        // For cofounder project, also generate individual file nodes for non-JS files
+                        const individualFileNodes = await generateIndividualFileNodes(projectPath);
+                        console.log("> Found individual files:", Object.keys(individualFileNodes).length);
+                        
+                        // Merge all analysis results (framework + AST + individual files)
+                        Object.assign(analysisResult, astNodes, individualFileNodes);
+                        
+                        if (socket) {
+                                socket.emit("loading$progress", {
+                                        timestamp: Date.now(),
+                                        project: project,
+                                        message: "Converting analysis results...",
+                                        progress: 80
+                                });
+                        }
+                        
+                        // Convert analysis result to database format expected by the dashboard
+                        const projectData = {};
+                        for (const [nodeKey, nodeData] of Object.entries(analysisResult)) {
+                                projectData[nodeKey] = {
+                                        latest: {
+                                                tsx: typeof nodeData.content === 'string' 
+                                                        ? nodeData.content 
+                                                        : nodeData.type === 'complex'
+                                                                ? JSON.stringify(nodeData.content, null, 2)
+                                                                : yaml.stringify(nodeData.content),
+                                                timestamp: Date.now(),
+                                                type: nodeData.type || 'yaml'
+                                        }
+                                };
+                        }
                         
                         projects[project] = projectData;
-                        console.log("> Cofounder project analyzed successfully");
+                        console.log("> Cofounder project analyzed successfully with comprehensive analyzer");
                         console.dir({
                                 load_project: project,
                                 data_keys: `${Object.keys(projects[project]).join(" , ")}`,
+                                total_nodes: Object.keys(projectData).length
                         });
                         return projectData;
                 } catch (error) {
                         console.error("> Error analyzing cofounder project:", error);
+                        console.error(error.stack);
+                        // Fallback to empty project if analysis fails
                         projects[project] = {};
+                        return {};
                 }
         } else {
                 // Original database loading for other projects

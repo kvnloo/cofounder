@@ -15,6 +15,8 @@
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "^0.27.3",
+		"@babel/parser": "^7.24.0",
+		"@babel/traverse": "^7.24.0",
 		"@google-cloud/storage": "^7.12.1",
 		"@resvg/resvg-js": "^2.6.2",
 		"async-retry": "^1.3.3",
